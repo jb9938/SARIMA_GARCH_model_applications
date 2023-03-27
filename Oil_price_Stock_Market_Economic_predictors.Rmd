@@ -1,0 +1,137 @@
+---
+title: "STA457 Assignment 2"
+author: "Joon Bum Yang"
+date: '2022-08-14'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80), tidy=TRUE)
+library(astsa)
+library(dynlm)
+library(fGarch)
+library(stats)
+library(tseries)
+library(forecast)
+library(marima)
+```
+
+# Oil price data with GARCH and ARIMA
+```{r, cache =TRUE,results='hide',fig.keep='all'}
+par(mfrow=c(3,1),par(mar=c(3,1,3,1)))
+plot(diff(log(oil)), main="OIL", ylab="log diff Dollars per Barrel")
+#Looking at ACF,PACF and auto ARIMA, we will choose ARIMA(1,1,1) process
+acf(diff(log(oil)))
+pacf(diff(log(oil)))
+auto.arima((log(oil)), seasonal = FALSE)
+#Reports (1,1,1) to be the p,d,q combination with lowest information criterion. 
+u = sarima(log(oil), 1, 1, 1, Model = FALSE)
+acf2(resid(u$fit)^2, 20)
+#The ACF2 of squared residual shows non-Gaussian ARMA(1,1) process, indicating GARCH(1,1).
+
+```
+
+```{r, cache = TRUE, warning = FALSE}
+#fitting GARCH(1,1) with ARIMA(1,1,1)
+summary(garchFit(~arma(1,1,1) + garch(1,1), log(oil),trace = FALSE))
+```
+
+
+
+
+First, we plot our time series and transform. We'd like to look at returns. Therefore, we need to use 1st diff. 
+```{r, cache = TRUE, warning = FALSE, tidy=TRUE}
+mts_dax <- EuStockMarkets[,1]
+
+plot(mts_dax, main = "dax_EUStockMarkets", ylab = "closing prices")
+#looks un-stationary, take the log diff.
+plot(diff(log(mts_dax)), main = "diff dax_EUStockMarkets", ylab = "diff closing prices")
+#Appears to have 0 mean. However, clearly shows changing variance. 
+Box.test(diff(log(mts_dax)), lag = 1, type = "Ljung")
+adf.test(diff(log(mts_dax)))
+#From Ljung box test and ADF test, we can conclude that taking \
+#diff made the time series have constant mean( as we reject null).\
+#However, Ljung box test has failed due to changing variance. 
+
+#Looking at ACF and PACF to determine ARIMA parameter (we know d = 1)
+par(mfrow=c(2,1),par(mar=c(3,1,3,1)))
+acf(diff(log(mts_dax)))
+pacf(diff(log(mts_dax)))
+#ACF has a hard cut off at 1, PACF looks sinusoidal. We choose ARIMA(0,1,1).
+
+u_2 = sarima(log(mts_dax), 0,1,1, details = FALSE)
+
+#Looking at ACF of squared residual to determine GARCH parameter.
+acf2(resid(u_2$fit)^2, 20)
+#both models Look heavily correlated try GARCH(1,1)
+
+#Running auto arima on residuals gives GARCH(1,2) compare both
+auto.arima(resid(u_2$fit)^2, seasonal = FALSE)
+
+
+summary(mts_dax_garch <- garchFit(~arma(0,1,1) + garch(1,1), diff(log(mts_dax)), trace = FALSE))
+
+summary(mts_dax_garch <- garchFit(~arma(0,1,1) + garch(1,2), diff(log(mts_dax)),trace = FALSE))
+
+```
+By comparing GARCH(1,1) and GARCH(1,2), I conclude by choosing ARIMA(0,1,1) with GARCH(1,1). Although extremely small, it has lower Information Criterion statistics and all of the estimated coefficients are significant. The residual test for both models show Ljung-Box test failing to reject null and rejecting Shapiro-Wilk test null. Which means under GARCH, the errors are now normal and independently distributed. 
+
+
+
+
+# ARIMA with ecnomic predictiors 
+```{r, cache = TRUE}
+plot(econ5)
+
+mts_econ5 <- (econ5)[,1:3]
+
+#Checking stationary and autocorrelatons
+plot(diff(log(mts_econ5)))
+acf(diff(log(mts_econ5)))
+pacf(diff(log(mts_econ5)))
+
+#Auto.ARIMA to decide VARMA(P,Q)
+auto.arima((log(mts_econ5[,1])), seasonal = FALSE)
+auto.arima((log(mts_econ5[,2])), seasonal = FALSE)
+auto.arima((log(mts_econ5[,3])), seasonal = FALSE)
+#Choose VARMA(2,2)
+
+unemp <- ts(1:length(gnp),frequency=4)
+
+#Fitting VARMA(2,2) to MTS(uneployment, gnp and consumption)
+model = define.model(kvar=3, ar=c(1,2), ma=c(1,2))
+arp = model$ar.pattern; map = model$ma.pattern
+unemp.d = resid(detr<- lm(log(mts_econ5[,1])~ time(mts_econ5[,1]), na.action=NULL))
+gnp.d = resid(detr<- lm(log(mts_econ5[,2])~ time(mts_econ5[,2]), na.action=NULL))
+consum.d = resid(detr<- lm(log(mts_econ5[,3])~ time(mts_econ5[,3]), na.action=NULL))
+xdata = matrix(cbind(unemp.d, gnp.d, consum.d), ncol =3) 
+fit = marima(xdata, ar.pattern=arp, ma.pattern=map, means=c(1,1,1),penalty=1)
+
+#Residual Analysis
+innov = t(resid(fit)) 
+plot.ts(innov) 
+acf(innov, na.action=na.pass)
+#No sign of autocorrelation besides initial point(u1&u2 and u2&u3). Residual plot looks white noise. 
+
+#AR estimates
+short.form(fit$ar.estimates, leading=FALSE, name = "AR")
+#AR t-stat 
+short.form(fit$ar.fvalues, leading=FALSE, name = "T^2 stat AR ")
+#MA estimates
+short.form(fit$ma.estimates, leading=FALSE, name = "MA")
+#MA t-stat
+short.form(fit$ma.fvalues, leading=FALSE, name = "T^2 stat MA")
+
+#Residual covariance coefficients
+fit$resid.cov
+
+```
+
+
+
+
+
+
+
+
