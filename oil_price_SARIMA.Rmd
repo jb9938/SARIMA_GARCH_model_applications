@@ -1,0 +1,104 @@
+---
+title: "oil_price_SARIMA"
+author: "Joon Bum Yang"
+date: '2023-03-27'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Set Up
+```{r}
+#look at the data
+plot(oil, xlab = "Time", ylab = "Dollars Per Barrel")
+
+y_oil <- diff(log(oil))
+
+#plot acf/pacf
+par(mfrow=c(2,1),par(mar=c(2,4,2,4)))
+acf(y_oil)
+pacf(y_oil)
+
+plot(y_oil, xlab = "Time", ylab = "log_diff(Dollars Per Barrel)")
+
+#sign of ARIMA(1,1,0), given acf cut off at lag 1 and its significance, d = 1 
+
+#diagnostic 
+fit <- arima(y_oil, order = c(1,1,0))     
+fit
+arima.fit = arima.sim(list(order=c(1,1,0), ar = -0.3858), n = 100)
+sarima(y_oil, 1,1,0)
+```
+
+Although we see little to no abnormality in standardized residuals other than some outlines at 2009, ACF showing no trend, Normal Q-Q Plot showing normality, our model did not perform well on ljung-box statistic and we are fail to reject null that residuals are not independent. 
+
+
+
+```{r}
+#A) Look at the plot
+plot(sales)
+
+#B) Try log difference 
+y <- diff(log(sales))
+plot(y)
+#plot itself looks fine, no clear sign of changing mean and variance.
+
+#c)
+par(mfrow=c(2,1),par(mar=c(1,4,1,4)))
+acf(y, lag=20)
+pacf(y, lag= 20)
+
+#Will assume given pacf showing somewhat of a sinusoidal pattern and acf cut off atlag at q = 4, no signficant lag at both acf and pacf so, D = 1. 
+
+# D)
+model_1 <-arima(y, order = c(0, 1, 4))
+model_1 # Paramter estimation
+arima.fit = arima.sim(list(order=c(0,1,4), ma = c(-0.7357,  -0.0161,  -0.0332,  -0.0159)), n = 150)
+
+
+# E)
+sarima(y, 0,1,4)
+
+
+```
+
+All our diagnostic looks good, standardized residuals look like random walk, lags in ACF all stays within significance, Normality checks out and Ljung-Box indicates we reject null hypothesis (residuals are independent). 
+
+```{r}
+lead = BJsales.lead
+par(mfrow=c(1,1),par(mar=c(4,4,4,4)))
+ccf(diff(sales),diff(BJsales.lead), main = "CCF of  diff in sales and lead")
+
+lag2.plot(diff(BJsales.lead),diff(sales), max.lag = 3)
+
+```
+Although just the look of lag plot and ccf, lag 3 clearly shows high correlation, we can gain alot of information from how the lag plot turned positive in lag 3. this could probably an evidence of the value at lead at lag 3 is correlated to sales at lag 0 while other lags are not. 
+
+
+```{r, cache= TRUE}
+sales_L = ts.intersect(sales, leadL3=stats::lag(lead,-3), dframe=TRUE)
+
+summary(fit_L <- lm(sales~leadL3, data=sales_L, na.action=NULL))
+
+# We are treating x has an error term, therefore, can determine its arma by residuals. 
+plot(resid(fit_L))
+acf2(resid(fit_L)) #indication of AR(2) therefore, x_t is a AR(2) model
+
+sarima(sales_L$sales,2,0,0, xreg = sales_L$leadL3, details =FALSE)$ttable
+```
+We see the estimated coefficient for lagged variable lead, for p.value 0, we reject null hypothesis and can confirm just based on the coefficients that lag 3 leads had an impact on sales. 
+
+```{r}
+#phi = 0.8
+phi = c(rep(0,11),.8)
+ACF = ARMAacf(ar=phi, ma=-.5, 50)[-1] # [-1] removes 0 lag
+PACF = ARMAacf(ar=phi, ma=-.5, 50, pacf=TRUE)
+par(mfrow=c(1,2))
+
+
+plot(ACF, type="h", xlab="LAG", ylim=c(-.4,.8)); abline(h=0, main = "season acf")
+
+plot(PACF, type="h", xlab="LAG", ylim=c(-.4,.8)); abline(h=0, main = "season pacf")
+```
